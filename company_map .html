@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>契約企業マップ</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --surface2: #22263a;
+    --border: #2e3347; --accent: #4f8ef7; --accent2: #f7824f;
+    --accent3: #4fcc8e; --text: #e8eaf2; --text-muted: #7a8099;
+    --danger: #f75f5f; --shadow: 0 4px 24px rgba(0,0,0,0.5);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Noto Sans JP', sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 10px 20px; display: flex; align-items: center; gap: 16px; flex-shrink: 0; z-index: 1000; }
+  header h1 { font-size: 15px; font-weight: 700; letter-spacing: 0.08em; color: var(--accent); white-space: nowrap; }
+  .divider { width: 1px; height: 20px; background: var(--border); }
+  .stats { display: flex; gap: 20px; font-size: 11px; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace; }
+  .stats span strong { color: var(--text); font-size: 13px; display: block; }
+  .header-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 18px; border-radius: 8px; font-size: 13px; font-family: 'Noto Sans JP', sans-serif; font-weight: 500; cursor: pointer; border: none; transition: all 0.15s; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #6fa3ff; transform: translateY(-1px); }
+  .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+
+  #upload-overlay { position: absolute; inset: 0; background: rgba(15,17,23,0.97); display: flex; align-items: center; justify-content: center; z-index: 5000; transition: opacity 0.3s; }
+  #upload-overlay.hidden { opacity: 0; pointer-events: none; }
+  .upload-card { background: var(--surface); border: 2px dashed var(--border); border-radius: 16px; padding: 48px 64px; text-align: center; max-width: 500px; transition: border-color 0.2s, background 0.2s; }
+  .upload-card.drag-over { border-color: var(--accent); background: rgba(79,142,247,0.06); }
+  .upload-icon { font-size: 52px; margin-bottom: 20px; display: block; }
+  .upload-card h2 { font-size: 18px; margin-bottom: 10px; }
+  .upload-card p { color: var(--text-muted); font-size: 13px; line-height: 1.8; margin-bottom: 24px; }
+  .upload-card code { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--accent3); }
+  #file-input { display: none; }
+
+  .main-layout { display: flex; flex: 1; overflow: hidden; }
+
+  #sidebar { width: 300px; min-width: 300px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; transition: width 0.25s, min-width 0.25s; }
+  #sidebar.collapsed { width: 0; min-width: 0; }
+  .sidebar-header { padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 700; letter-spacing: 0.1em; color: var(--text-muted); text-transform: uppercase; display: flex; align-items: center; justify-content: space-between; }
+  .filter-section { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .filter-label { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; font-weight: 500; }
+  .filter-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { padding: 4px 10px; border-radius: 20px; font-size: 11px; cursor: pointer; border: 1px solid var(--border); background: var(--surface2); color: var(--text-muted); transition: all 0.15s; white-space: nowrap; }
+  .chip.active { border-color: var(--accent); color: var(--accent); background: rgba(79,142,247,0.12); }
+  .search-box { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .search-box input { width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; color: var(--text); font-size: 13px; font-family: 'Noto Sans JP', sans-serif; outline: none; transition: border-color 0.15s; }
+  .search-box input:focus { border-color: var(--accent); }
+  .search-box input::placeholder { color: var(--text-muted); }
+  #company-list { flex: 1; overflow-y: auto; padding: 6px 0; }
+  #company-list::-webkit-scrollbar { width: 4px; }
+  #company-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .company-item { padding: 10px 16px; cursor: pointer; border-left: 3px solid transparent; transition: background 0.1s, border-color 0.1s; }
+  .company-item:hover { background: var(--surface2); }
+  .company-item.active { background: rgba(79,142,247,0.08); border-left-color: var(--accent); }
+  .company-item .name { font-size: 13px; font-weight: 500; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .company-item .sub { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  .service-badge { display: inline-block; padding: 2px 7px; border-radius: 3px; font-size: 10px; margin-right: 4px; margin-bottom: 2px; font-weight: 500; }
+
+  #map-container { flex: 1; position: relative; }
+  #map { width: 100%; height: 100%; }
+  .leaflet-tile-container img { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(1.1) saturate(0.6); }
+
+  #legend { position: absolute; bottom: 24px; right: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; z-index: 1000; font-size: 12px; min-width: 160px; }
+  #legend h4 { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px; }
+  .legend-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; border: 1.5px solid rgba(255,255,255,0.4); }
+
+  /* Popup */
+  .leaflet-popup-content-wrapper { background: var(--surface) !important; border: 1px solid var(--border) !important; border-radius: 12px !important; box-shadow: var(--shadow) !important; padding: 0 !important; }
+  .leaflet-popup-content { margin: 0 !important; color: var(--text) !important; font-family: 'Noto Sans JP', sans-serif !important; width: 260px !important; }
+  .leaflet-popup-tip { background: var(--surface) !important; }
+  .leaflet-popup-close-button { color: var(--text-muted) !important; top: 10px !important; right: 12px !important; font-size: 16px !important; }
+
+  .popup-inner { padding: 16px; }
+  .popup-name { font-size: 14px; font-weight: 700; margin-bottom: 10px; padding-right: 20px; line-height: 1.4; color: var(--text); }
+  .popup-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+  .popup-divider { height: 1px; background: var(--border); margin: 10px 0; }
+  .popup-row { font-size: 12px; margin-bottom: 7px; display: flex; align-items: flex-start; gap: 8px; }
+  .popup-row-icon { flex-shrink: 0; width: 16px; text-align: center; }
+  .popup-row-label { color: var(--text-muted); flex-shrink: 0; }
+  .popup-row-value { color: var(--text); flex: 1; line-height: 1.5; }
+  .popup-row-value.highlight { color: var(--accent3); font-weight: 700; font-size: 13px; }
+
+  .custom-div-icon { background: transparent; border: none; }
+  .marker-dot { width: 13px; height: 13px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.7); box-shadow: 0 0 8px rgba(0,0,0,0.6); }
+
+  #toast { position: fixed; top: 56px; left: 50%; transform: translateX(-50%) translateY(-10px); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 18px; font-size: 13px; z-index: 9999; opacity: 0; transition: opacity 0.3s, transform 0.3s; pointer-events: none; white-space: nowrap; }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.error { border-color: var(--danger); color: var(--danger); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📍 契約企業マップ</h1>
+  <div class="divider"></div>
+  <div class="stats">
+    <span>企業数<strong id="stat-total">—</strong></span>
+    <span>表示中<strong id="stat-mapped">—</strong></span>
+    <span>ドライバー計<strong id="stat-drivers">—</strong></span>
+  </div>
+  <div class="header-actions">
+    <button class="btn btn-outline" onclick="toggleSidebar()">◀ リスト</button>
+    <button class="btn btn-outline" onclick="resetFile()">📂 ファイル変更</button>
+    <label class="btn btn-primary" for="file-input">📥 Excelを開く</label>
+    <input type="file" id="file-input" accept=".xlsx,.xls,.csv" onchange="handleFileSelect(event)">
+  </div>
+</header>
+
+<div class="main-layout">
+  <div id="sidebar">
+    <div class="sidebar-header">
+      <span>企業リスト</span>
+      <span id="list-count" style="font-size:12px;color:var(--text-muted);font-family:'IBM Plex Mono',monospace;"></span>
+    </div>
+    <div class="filter-section">
+      <div class="filter-label">サービスで絞り込み</div>
+      <div class="filter-chips" id="service-filters">
+        <div class="chip" id="chip-教育" onclick="toggleFilter('教育管理', this)">安全教育</div>
+        <div class="chip" id="chip-台帳" onclick="toggleFilter('従業員台帳', this)">従業員台帳</div>
+        <div class="chip" id="chip-車両" onclick="toggleFilter('車両台帳', this)">車両台帳</div>
+      </div>
+    </div>
+    <div class="search-box">
+      <input type="text" id="search-input" placeholder="企業名・住所で検索..." oninput="filterAndRender()">
+    </div>
+    <div id="company-list"></div>
+  </div>
+  <div id="map-container">
+    <div id="map"></div>
+    <div id="legend">
+      <h4>サービス凡例</h4>
+      <div class="legend-row"><span class="legend-dot" style="background:#4fcc8e"></span>安全教育のみ</div>
+      <div class="legend-row"><span class="legend-dot" style="background:#f7824f"></span>台帳のみ</div>
+      <div class="legend-row"><span class="legend-dot" style="background:#4f8ef7"></span>複数サービス</div>
+      <div class="legend-row"><span class="legend-dot" style="background:#7a8099"></span>その他</div>
+    </div>
+  </div>
+</div>
+
+<div id="upload-overlay">
+  <div class="upload-card" id="drop-zone"
+    ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)">
+    <span class="upload-icon">🗾</span>
+    <h2>契約企業データを読み込む</h2>
+    <p>
+      <code>契約企業_座標付き.xlsx</code> をドラッグ＆ドロップ<br><br>
+      必要な列：<code>企業名_事業所</code>、<code>住所</code>、<code>lat</code>、<code>lng</code><br>
+      任意：<code>教育管理</code>、<code>従業員台帳</code>、<code>車両台帳</code>、<code>ドライバー数</code>、<code>代表者名</code>
+    </p>
+    <label class="btn btn-primary" for="file-input" style="margin: 0 auto;">📂 ファイルを選択</label>
+    <p style="margin-top:16px; font-size:11px; color:var(--text-muted);">※ データはブラウザ内のみで処理。外部への送信なし。</p>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+let companies = [], markers = [], activeItem = null, map, sidebarOpen = true;
+let activeFilters = new Set();
+
+// サービス定義
+const SERVICES = [
+  { key: '教育管理',  label: '安全教育', color: '#4fcc8e' },
+  { key: '従業員台帳', label: '従業員台帳', color: '#f7824f' },
+  { key: '車両台帳',  label: '車両台帳',  color: '#c34fcc' },
+];
+
+function initMap() {
+  map = L.map('map', { zoomControl: false }).setView([36.5, 137.5], 5);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors', maxZoom: 18
+  }).addTo(map);
+  L.control.zoom({ position: 'topleft' }).addTo(map);
+}
+
+function handleDragOver(e) { e.preventDefault(); document.getElementById('drop-zone').classList.add('drag-over'); }
+function handleDragLeave() { document.getElementById('drop-zone').classList.remove('drag-over'); }
+function handleDrop(e) { e.preventDefault(); document.getElementById('drop-zone').classList.remove('drag-over'); if (e.dataTransfer.files[0]) processFile(e.dataTransfer.files[0]); }
+function handleFileSelect(e) { if (e.target.files[0]) processFile(e.target.files[0]); }
+
+function resetFile() {
+  companies = [];
+  markers.forEach(m => { if (m) map.removeLayer(m); });
+  markers = [];
+  document.getElementById('upload-overlay').classList.remove('hidden');
+  document.getElementById('company-list').innerHTML = '';
+  updateStats();
+}
+
+function processFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+      parseData(rows);
+    } catch(err) { showToast('読み込み失敗: ' + err.message, true); }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function parseData(rows) {
+  if (!rows.length) { showToast('データが見つかりません', true); return; }
+  const keys = Object.keys(rows[0]);
+  const find = (ps) => keys.find(k => ps.some(p => k.includes(p))) || '';
+
+  const colName    = find(['企業名','事業所','会社名','名称']);
+  const colAddr    = find(['住所','所在地','拠点']);
+  const colDrivers = find(['ドライバー','driver','人数','台数']);
+  const colRep     = find(['代表者','担当者','理事','representative']);
+  const colLat     = find(['lat','latitude','緯度']);
+  const colLng     = find(['lng','lon','longitude','経度']);
+  // サービス列
+  const colKyoiku  = find(['教育管理','教育','安全教育']);
+  const colDaich   = find(['従業員台帳','従業員']);
+  const colSharyo  = find(['車両台帳','車両']);
+
+  if (!colName) { showToast('「企業名」列が見つかりません', true); return; }
+
+  companies = rows.map((r, i) => {
+    const lat = parseFloat(r[colLat]);
+    const lng = parseFloat(r[colLng]);
+    // サービス判定
+    const services = [];
+    if (colKyoiku && (r[colKyoiku] == 1 || r[colKyoiku] === '1' || r[colKyoiku] === true)) services.push('教育管理');
+    if (colDaich  && (r[colDaich]  == 1 || r[colDaich]  === '1' || r[colDaich]  === true)) services.push('従業員台帳');
+    if (colSharyo && (r[colSharyo] == 1 || r[colSharyo] === '1' || r[colSharyo] === true)) services.push('車両台帳');
+
+    return {
+      id:       i,
+      name:     String(r[colName] || '').trim(),
+      address:  String(r[colAddr] || '').trim(),
+      drivers:  String(r[colDrivers] || '').trim(),
+      rep:      colRep ? String(r[colRep] || '').trim() : '',
+      services: services,
+      lat:      isNaN(lat) ? null : lat,
+      lng:      isNaN(lng) ? null : lng,
+    };
+  }).filter(c => c.name);
+
+  document.getElementById('upload-overlay').classList.add('hidden');
+  companies.forEach(c => { if (c.lat && c.lng) addMarker(c); });
+  filterAndRender();
+  updateStats();
+  fitMapBounds();
+  showToast(`✅ ${companies.filter(c=>c.lat).length}件をマップに表示しました`);
+}
+
+function getMarkerColor(services) {
+  if (!services || services.length === 0) return '#7a8099';
+  if (services.length > 1) return '#4f8ef7';
+  if (services.includes('教育管理')) return '#4fcc8e';
+  if (services.includes('従業員台帳')) return '#f7824f';
+  if (services.includes('車両台帳')) return '#c34fcc';
+  return '#7a8099';
+}
+
+function makeIcon(color) {
+  return L.divIcon({ className: 'custom-div-icon', html: `<div class="marker-dot" style="background:${color}"></div>`, iconSize: [13,13], iconAnchor: [6,6] });
+}
+
+function addMarker(c) {
+  const color = getMarkerColor(c.services);
+  const m = L.marker([c.lat, c.lng], { icon: makeIcon(color) }).addTo(map).bindPopup(makePopup(c), { maxWidth: 300 });
+  m.on('click', () => highlightItem(c.id));
+  markers[c.id] = m;
+}
+
+function makePopup(c) {
+  // サービスバッジ
+  const badgesHtml = SERVICES
+    .filter(s => c.services.includes(s.key))
+    .map(s => `<span class="service-badge" style="background:${s.color}22;color:${s.color};border:1px solid ${s.color}55">${s.label}</span>`)
+    .join('');
+
+  // ドライバー数
+  const driversHtml = c.drivers && c.drivers !== '0' && c.drivers !== ''
+    ? `<div class="popup-row">
+        <span class="popup-row-icon">🚛</span>
+        <span class="popup-row-label">ドライバー</span>
+        <span class="popup-row-value highlight">${esc(c.drivers)} 名</span>
+       </div>` : '';
+
+  // 代表者
+  const repHtml = c.rep
+    ? `<div class="popup-row">
+        <span class="popup-row-icon">👤</span>
+        <span class="popup-row-label">代表者</span>
+        <span class="popup-row-value">${esc(c.rep)}</span>
+       </div>` : '';
+
+  return `<div class="popup-inner">
+    <div class="popup-name">${esc(c.name)}</div>
+    ${badgesHtml ? `<div class="popup-badges">${badgesHtml}</div>` : ''}
+    <div class="popup-divider"></div>
+    <div class="popup-row">
+      <span class="popup-row-icon">📍</span>
+      <span class="popup-row-value">${esc(c.address)}</span>
+    </div>
+    ${driversHtml}
+    ${repHtml}
+  </div>`;
+}
+
+function fitMapBounds() {
+  const pts = companies.filter(c=>c.lat).map(c=>[c.lat,c.lng]);
+  if (pts.length) map.fitBounds(pts, { padding: [40,40] });
+}
+
+function toggleFilter(serviceKey, el) {
+  if (activeFilters.has(serviceKey)) {
+    activeFilters.delete(serviceKey);
+    el.classList.remove('active');
+  } else {
+    activeFilters.add(serviceKey);
+    el.classList.add('active');
+  }
+  filterAndRender();
+}
+
+function getFiltered() {
+  const q = document.getElementById('search-input').value.toLowerCase();
+  return companies.filter(c => {
+    const matchQ = !q || c.name.toLowerCase().includes(q) || c.address.toLowerCase().includes(q);
+    const matchF = activeFilters.size === 0 || [...activeFilters].every(f => c.services.includes(f));
+    return matchQ && matchF;
+  });
+}
+
+function filterAndRender() {
+  const filtered = getFiltered();
+  const filteredIds = new Set(filtered.map(c=>c.id));
+  document.getElementById('list-count').textContent = `${filtered.length}件`;
+
+  const list = document.getElementById('company-list');
+  list.innerHTML = '';
+  filtered.forEach(c => {
+    const color = getMarkerColor(c.services);
+    const badges = SERVICES
+      .filter(s => c.services.includes(s.key))
+      .map(s => `<span class="service-badge" style="background:${s.color}22;color:${s.color}">${s.label}</span>`)
+      .join('');
+    const div = document.createElement('div');
+    div.className = 'company-item' + (activeItem === c.id ? ' active' : '');
+    div.id = `item-${c.id}`;
+    div.innerHTML = `
+      <div class="name">${c.lat ? '📍' : '—'} ${esc(c.name)}</div>
+      <div class="sub">${badges || '<span style="color:var(--text-muted)">サービスなし</span>'}</div>
+      ${c.drivers && c.drivers !== '0' ? `<div class="sub">🚛 ${esc(c.drivers)}名</div>` : ''}
+      <div class="sub">${esc(c.address.slice(0,32))}${c.address.length>32?'…':''}</div>
+    `;
+    div.onclick = () => { highlightItem(c.id); if (c.lat) map.setView([c.lat, c.lng], 14); };
+    list.appendChild(div);
+  });
+
+  companies.forEach(c => {
+    if (!markers[c.id]) return;
+    if (filteredIds.has(c.id)) { if (!map.hasLayer(markers[c.id])) map.addLayer(markers[c.id]); }
+    else { if (map.hasLayer(markers[c.id])) map.removeLayer(markers[c.id]); }
+  });
+}
+
+function highlightItem(id) {
+  if (activeItem !== null) { const old = document.getElementById(`item-${activeItem}`); if (old) old.classList.remove('active'); }
+  activeItem = id;
+  const el = document.getElementById(`item-${id}`);
+  if (el) { el.classList.add('active'); el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+  if (markers[id]) markers[id].openPopup();
+}
+
+function toggleSidebar() {
+  sidebarOpen = !sidebarOpen;
+  document.getElementById('sidebar').classList.toggle('collapsed', !sidebarOpen);
+}
+
+function updateStats() {
+  document.getElementById('stat-total').textContent = companies.length || '—';
+  document.getElementById('stat-mapped').textContent = companies.filter(c=>c.lat).length || '—';
+  const d = companies.reduce((s,c) => s + (parseInt(c.drivers)||0), 0);
+  document.getElementById('stat-drivers').textContent = d > 0 ? d.toLocaleString() : '—';
+}
+
+let toastTimer;
+function showToast(msg, isError=false) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'show' + (isError ? ' error' : '');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = '', 4000);
+}
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+initMap();
+</script>
+</body>
+</html>
